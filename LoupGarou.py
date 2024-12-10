@@ -62,36 +62,55 @@ class LoupGarouClient:
         # Info frame (Room ID et Rôle)
         info_frame = ttk.Frame(self.game_room)
         info_frame.pack(fill=tk.X, padx=10, pady=5)
-        self.room_label = ttk.Label(info_frame, text=f"Room: {self.room_id}")
-        self.room_label.pack(side=tk.LEFT)
-        self.role_label = ttk.Label(info_frame, text="En attente du début de la partie")
-        self.role_label.pack(side=tk.RIGHT)
         
-        # Zone de chat
-        chat_frame = ttk.Frame(self.game_room)
-        chat_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+        # Left side: Room info
+        left_info = ttk.Frame(info_frame)
+        left_info.pack(side=tk.LEFT)
+        self.room_label = ttk.Label(left_info, text=f"Room: {self.room_id}")
+        self.room_label.pack()
         
-        # Chat et liste des joueurs côte à côte
+        # Right side: Role info
+        right_info = ttk.Frame(info_frame)
+        right_info.pack(side=tk.RIGHT)
+        self.role_label = ttk.Label(right_info, text="En attente du début de la partie")
+        self.role_label.pack()
+        
+        # Main content
+        content_frame = ttk.Frame(self.game_room)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+        
+        # Chat area (left side)
+        chat_frame = ttk.Frame(content_frame)
+        chat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
         self.chat_area = tk.Text(chat_frame, height=20, width=40, state='disabled')
-        self.chat_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.chat_area.pack(fill=tk.BOTH, expand=True)
         
-        players_frame = ttk.Frame(chat_frame)
+        # Players list (right side)
+        players_frame = ttk.Frame(content_frame)
         players_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
-        ttk.Label(players_frame, text="Joueurs").pack()
-        self.players_list = tk.Listbox(players_frame, height=10, width=20)
-        self.players_list.pack()
         
-        # Zone de saisie du message
+        # Player count label
+        self.player_count_label = ttk.Label(players_frame, text="Joueurs: 0/16")
+        self.player_count_label.pack()
+        
+        # Players list
+        self.players_list = tk.Listbox(players_frame, height=10, width=20)
+        self.players_list.pack(fill=tk.Y, expand=True)
+        
+        # Message input area
         input_frame = ttk.Frame(self.game_room)
         input_frame.pack(fill=tk.X, padx=10, pady=5)
+        
         self.message_entry = ttk.Entry(input_frame)
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(input_frame, text="Envoyer", 
-                   command=self.send_message).pack(side=tk.RIGHT, padx=5)
         
-        # Bouton pour démarrer la partie
+        ttk.Button(input_frame, text="Envoyer", 
+                command=self.send_message).pack(side=tk.RIGHT, padx=5)
+        
+        # Start button
         self.start_button = ttk.Button(self.game_room, text="Démarrer la partie",
-                                     command=self.start_game)
+                                    command=self.start_game, state='disabled')
         self.start_button.pack(pady=5)
     
     def handle_message(self, message):
@@ -102,22 +121,24 @@ class LoupGarouClient:
             self.room_id = message['room_id']
             self.room_label.config(text=f"Room: {self.room_id}")
             self.add_chat_message("Système", f"Room créée! ID: {self.room_id}")
+            self.update_players_list(message['players_info'])
             
         elif msg_type == 'room_joined':
             self.room_id = message['room_id']
             self.room_label.config(text=f"Room: {self.room_id}")
             self.add_chat_message("Système", "Vous avez rejoint la partie!")
+            self.update_players_list(message['players_info'])
             
         elif msg_type == 'chat':
             self.add_chat_message(message['username'], message['content'])
             
         elif msg_type == 'player_joined':
             self.add_chat_message("Système", f"{message['username']} a rejoint la partie")
-            self.update_players_list(message['players'])
+            self.update_players_list(message['players_info'])
             
         elif msg_type == 'player_left':
             self.add_chat_message("Système", f"{message['username']} a quitté la partie")
-            self.update_players_list(message['players'])
+            self.update_players_list(message['players_info'])
             
         elif msg_type == 'game_started':
             self.game_started = True
@@ -125,6 +146,10 @@ class LoupGarouClient:
             self.role_label.config(text=f"Rôle: {self.role}")
             self.start_button.config(state='disabled')
             self.add_chat_message("Système", f"La partie commence! Vous êtes {self.role}")
+            
+        elif msg_type == 'room_full':
+            messagebox.showerror("Erreur", "La room est pleine!")
+            self.show_frame(self.main_menu)
     
     def add_chat_message(self, username, content):
         """Ajoute un message au chat"""
@@ -133,12 +158,26 @@ class LoupGarouClient:
         self.chat_area.see('end')
         self.chat_area.config(state='disabled')
     
-    def update_players_list(self, players):
-        """Met à jour la liste des joueurs"""
+    def update_players_list(self, players_info):
+        """Met à jour la liste des joueurs et le compteur"""
+        player_count = players_info['player_count']
+        max_players = players_info['max_players']
+        players = players_info['players']
+        
+        # Mise à jour du compteur
+        self.player_count_label.config(text=f"Joueurs: {player_count}/{max_players}")
+        
+        # Mise à jour de la liste
         self.players_list.delete(0, tk.END)
         for player in players:
             self.players_list.insert(tk.END, player)
-    
+            
+        # Active le bouton de démarrage si assez de joueurs
+        if 6 <= player_count <= max_players:
+            self.start_button.config(state='normal')
+        else:
+            self.start_button.config(state='disabled')
+
     def create_game(self):
         """Crée une nouvelle partie"""
         self.username = self.username_entry.get()

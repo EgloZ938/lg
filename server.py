@@ -5,20 +5,33 @@ import random
 from typing import Dict, List
 
 class GameRoom:
-    def __init__(self, room_id: str):
+    def __init__(self, room_id: str, max_players: int = 16):
         self.room_id = room_id
+        self.max_players = max_players  # Maximum de joueurs
+        self.min_players = 6  # Minimum de joueurs
         self.players: Dict[socket.socket, dict] = {}  # socket -> player_info
         self.game_started = False
         self.current_phase = "waiting"  # waiting, night, day, vote
         self.votes = {}
         self.roles = ["Loup-Garou", "Villageois", "Sorcière", "Voyante"]
     
-    def add_player(self, client_socket: socket.socket, username: str):
+    def add_player(self, client_socket: socket.socket, username: str) -> bool:
         """Ajoute un joueur à la room"""
+        if len(self.players) >= self.max_players:
+            return False
         self.players[client_socket] = {
             "username": username,
             "role": None,
             "is_alive": True
+        }
+        return True
+    
+    def get_players_info(self) -> dict:
+        """Retourne les informations sur les joueurs"""
+        return {
+            'player_count': len(self.players),
+            'max_players': self.max_players,
+            'players': [player['username'] for player in self.players.values()]
         }
     
     def remove_player(self, client_socket: socket.socket):
@@ -28,7 +41,7 @@ class GameRoom:
     
     def start_game(self):
         """Démarre la partie et assigne les rôles"""
-        if len(self.players) >= 4:  # Minimum 4 joueurs
+        if self.min_players <= len(self.players) <= self.max_players:
             self.game_started = True
             self.assign_roles()
             return True
@@ -96,28 +109,45 @@ class LoupGarouServer:
         if msg_type == 'create_room':
             room_id = self.create_room()
             self.clients[client_socket] = room_id
-            self.rooms[room_id].add_player(client_socket, message['username'])
-            response = {
-                'type': 'room_created',
-                'room_id': room_id
-            }
-            client_socket.send(json.dumps(response).encode('utf-8'))
+            room = self.rooms[room_id]
+            if room.add_player(client_socket, message['username']):
+                response = {
+                    'type': 'room_created',
+                    'room_id': room_id,
+                    'players_info': room.get_players_info()  # Ajout des infos joueurs
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+            else:
+                response = {
+                    'type': 'room_full'
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
             
         elif msg_type == 'join_room':
             room_id = message['room_id']
             if room_id in self.rooms and not self.rooms[room_id].game_started:
-                self.clients[client_socket] = room_id
-                self.rooms[room_id].add_player(client_socket, message['username'])
-                response = {
-                    'type': 'room_joined',
-                    'room_id': room_id
-                }
-                client_socket.send(json.dumps(response).encode('utf-8'))
-                # Informe les autres joueurs
-                self.broadcast_to_room(room_id, {
-                    'type': 'player_joined',
-                    'username': message['username']
-                }, client_socket)
+                room = self.rooms[room_id]
+                if room.add_player(client_socket, message['username']):
+                    self.clients[client_socket] = room_id
+                    # Envoie la confirmation au joueur qui rejoint
+                    response = {
+                        'type': 'room_joined',
+                        'room_id': room_id,
+                        'players_info': room.get_players_info()
+                    }
+                    client_socket.send(json.dumps(response).encode('utf-8'))
+                    
+                    # Informe les autres joueurs
+                    self.broadcast_to_room(room_id, {
+                        'type': 'player_joined',
+                        'username': message['username'],
+                        'players_info': room.get_players_info()
+                    }, client_socket)
+                else:
+                    response = {
+                        'type': 'room_full'
+                    }
+                    client_socket.send(json.dumps(response).encode('utf-8'))
                 
         elif msg_type == 'chat':
             room_id = self.clients.get(client_socket)
@@ -149,12 +179,9 @@ class LoupGarouServer:
                 room.remove_player(client_socket)
                 self.broadcast_to_room(room_id, {
                     'type': 'player_left',
-                    'username': username
+                    'username': username,
+                    'players_info': room.get_players_info()  # Ajout des infos joueurs
                 })
-                
-                # Supprime la room si elle est vide
-                if not room.players:
-                    del self.rooms[room_id]
         
         if client_socket in self.clients:
             del self.clients[client_socket]
