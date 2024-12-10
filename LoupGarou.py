@@ -67,7 +67,7 @@ class LoupGarouClient:
         left_info = ttk.Frame(info_frame)
         left_info.pack(side=tk.LEFT)
         self.room_label = ttk.Label(left_info, text=f"Room: {self.room_id}")
-        self.room_label.pack()
+        self.room_label.pack(side=tk.LEFT, padx=5)
         
         # Right side: Role info
         right_info = ttk.Frame(info_frame)
@@ -112,6 +112,10 @@ class LoupGarouClient:
         self.start_button = ttk.Button(self.game_room, text="Démarrer la partie",
                                     command=self.start_game, state='disabled')
         self.start_button.pack(pady=5)
+
+        # Bouton Déconnexion
+        ttk.Button(left_info, text="Déconnexion", 
+                command=self.disconnect).pack(side=tk.LEFT, padx=5)
     
     def handle_message(self, message):
         """Traite les messages reçus du serveur"""
@@ -122,6 +126,14 @@ class LoupGarouClient:
             self.room_label.config(text=f"Room: {self.room_id}")
             self.add_chat_message("Système", f"Room créée! ID: {self.room_id}")
             self.update_players_list(message['players_info'])
+
+        elif msg_type == 'room_not_found':
+            messagebox.showerror("Erreur", message['message'])
+            self.show_frame(self.main_menu)
+
+        elif msg_type == 'game_already_started':
+            messagebox.showerror("Erreur", message['message'])
+            self.show_frame(self.main_menu)
             
         elif msg_type == 'room_joined':
             self.room_id = message['room_id']
@@ -235,6 +247,25 @@ class LoupGarouClient:
                                "Impossible de se connecter au serveur. Vérifiez qu'il est bien démarré.")
             return False
     
+    def disconnect(self):
+        """Déconnecte le client et retourne au menu"""
+        if self.connected:
+            try:
+                message = {
+                    'type': 'disconnect',
+                    'username': self.username
+                }
+                self.client_socket.send(json.dumps(message).encode('utf-8'))
+            except:
+                pass
+            finally:
+                self.client_socket.close()
+                self.connected = False
+                self.room_id = None
+                self.role = None
+                self.game_started = False
+                self.show_frame(self.main_menu)
+
     def receive_messages(self):
         """Reçoit les messages du serveur"""
         while self.connected:

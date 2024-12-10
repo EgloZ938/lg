@@ -114,40 +114,59 @@ class LoupGarouServer:
                 response = {
                     'type': 'room_created',
                     'room_id': room_id,
-                    'players_info': room.get_players_info()  # Ajout des infos joueurs
+                    'players_info': room.get_players_info()
                 }
                 client_socket.send(json.dumps(response).encode('utf-8'))
             else:
-                response = {
-                    'type': 'room_full'
-                }
+                response = {'type': 'room_full'}
                 client_socket.send(json.dumps(response).encode('utf-8'))
-            
+                
         elif msg_type == 'join_room':
             room_id = message['room_id']
-            if room_id in self.rooms and not self.rooms[room_id].game_started:
-                room = self.rooms[room_id]
-                if room.add_player(client_socket, message['username']):
-                    self.clients[client_socket] = room_id
-                    # Envoie la confirmation au joueur qui rejoint
-                    response = {
-                        'type': 'room_joined',
-                        'room_id': room_id,
-                        'players_info': room.get_players_info()
-                    }
-                    client_socket.send(json.dumps(response).encode('utf-8'))
-                    
-                    # Informe les autres joueurs
-                    self.broadcast_to_room(room_id, {
-                        'type': 'player_joined',
-                        'username': message['username'],
-                        'players_info': room.get_players_info()
-                    }, client_socket)
-                else:
-                    response = {
-                        'type': 'room_full'
-                    }
-                    client_socket.send(json.dumps(response).encode('utf-8'))
+            # Vérifie si la room existe
+            if room_id not in self.rooms:
+                response = {
+                    'type': 'room_not_found',
+                    'message': "Cette room n'existe pas"
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+                return
+                
+            room = self.rooms[room_id]
+            # Vérifie si la partie a déjà commencé
+            if room.game_started:
+                response = {
+                    'type': 'game_already_started',
+                    'message': "La partie a déjà commencé"
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+                return
+                
+            # Essaie d'ajouter le joueur
+            if room.add_player(client_socket, message['username']):
+                self.clients[client_socket] = room_id
+                response = {
+                    'type': 'room_joined',
+                    'room_id': room_id,
+                    'players_info': room.get_players_info()
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+                
+                # Informe les autres joueurs
+                self.broadcast_to_room(room_id, {
+                    'type': 'player_joined',
+                    'username': message['username'],
+                    'players_info': room.get_players_info()
+                }, client_socket)
+            else:
+                response = {
+                    'type': 'room_full',
+                    'message': "La room est pleine"
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+        
+        elif msg_type == 'disconnect':
+            self.handle_disconnection(client_socket)
                 
         elif msg_type == 'chat':
             room_id = self.clients.get(client_socket)
@@ -168,6 +187,37 @@ class LoupGarouServer:
                         'role': player_info['role']
                     }
                     player_socket.send(json.dumps(response).encode('utf-8'))
+
+    def handle_disconnection(self, client_socket: socket.socket):
+        """Gère la déconnexion d'un client"""
+        try:
+            room_id = self.clients.get(client_socket)
+            if room_id:
+                room = self.rooms.get(room_id)
+                if room and client_socket in room.players:
+                    username = room.players[client_socket]['username']
+                    room.remove_player(client_socket)
+                    
+                    # Informe les autres joueurs de la déconnexion
+                    self.broadcast_to_room(room_id, {
+                        'type': 'player_left',
+                        'username': username,
+                        'players_info': room.get_players_info()
+                    })
+                    
+                    # Supprime la room si elle est vide
+                    if not room.players:
+                        del self.rooms[room_id]
+            
+            if client_socket in self.clients:
+                del self.clients[client_socket]
+        except Exception as e:
+            print(f"Erreur lors de la déconnexion: {e}")
+        finally:
+            try:
+                client_socket.close()
+            except:
+                pass
     
     def handle_disconnection(self, client_socket: socket.socket):
         """Gère la déconnexion d'un client"""
