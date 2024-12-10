@@ -185,7 +185,7 @@ class LoupGarouClient:
             self.players_list.insert(tk.END, player)
             
         # Active le bouton de démarrage si assez de joueurs
-        if 6 <= player_count <= max_players:
+        if 8 <= player_count <= max_players:
             self.start_button.config(state='normal')
         else:
             self.start_button.config(state='disabled')
