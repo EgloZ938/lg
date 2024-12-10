@@ -376,7 +376,14 @@ class LoupGarouClient:
 
     def send_message(self):
         """Envoie un message au serveur"""
-        if self.message_entry.get() and self.connected:
+        if not self.connected:
+            messagebox.showerror("Erreur", "Non connecté au serveur")
+            return
+            
+        if not self.message_entry.get():
+            return
+            
+        try:
             message = {
                 'type': 'chat',
                 'content': self.message_entry.get(),
@@ -384,6 +391,11 @@ class LoupGarouClient:
             }
             self.client_socket.send(json.dumps(message).encode('utf-8'))
             self.message_entry.delete(0, tk.END)
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du message: {e}")
+            self.connected = False
+            messagebox.showerror("Erreur", "Connexion au serveur perdue")
+            self.show_frame(self.main_menu)
 
     def start_game(self):
         """Démarre la partie"""

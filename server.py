@@ -341,13 +341,17 @@ class LoupGarouServer:
     def broadcast_to_room(self, room_id: str, message: dict, exclude_socket=None):
         """Envoie un message à tous les joueurs d'une room"""
         if room_id in self.rooms:
-            encoded_message = json.dumps(message).encode('utf-8')
-            for client_socket in self.rooms[room_id].players:
-                if client_socket != exclude_socket:
-                    try:
-                        client_socket.send(encoded_message)
-                    except:
-                        self.handle_disconnection(client_socket)
+            try:
+                encoded_message = json.dumps(message).encode('utf-8')
+                for client_socket in list(self.rooms[room_id].players.keys()):  # Conversion en liste pour éviter les modifications pendant l'itération
+                    if client_socket != exclude_socket:
+                        try:
+                            client_socket.send(encoded_message)
+                        except Exception as e:
+                            print(f"Erreur lors du broadcast: {e}")
+                            self.handle_disconnection(client_socket)
+            except Exception as e:
+                print(f"Erreur générale lors du broadcast: {e}")
     
     def create_room(self) -> str:
         room_id = str(random.randint(1000, 9999))
@@ -659,8 +663,10 @@ class LoupGarouServer:
     def send_to_player(self, player_socket: socket.socket, message: dict):
         """Envoie un message à un joueur spécifique"""
         try:
-            player_socket.send(json.dumps(message).encode('utf-8'))
-        except:
+            encoded_message = json.dumps(message).encode('utf-8')
+            player_socket.send(encoded_message)
+        except Exception as e:
+            print(f"Erreur lors de l'envoi au joueur: {e}")
             self.handle_disconnection(player_socket)
 
     def resolve_night_end(self, room: GameRoom):
@@ -727,22 +733,28 @@ class LoupGarouServer:
             if room_id:
                 room = self.rooms.get(room_id)
                 if room and client_socket in room.players:
-                    username = room.players[client_socket].username
-                    room.remove_player(client_socket)
-                    
-                    # Informe les autres joueurs de la déconnexion
-                    self.broadcast_to_room(room_id, {
-                        'type': 'player_left',
-                        'username': username,
-                        'players_info': room.get_players_info()
-                    })
-                    
+                    try:
+                        username = room.players[client_socket].username
+                        room.remove_player(client_socket)
+                        
+                        # Informe les autres joueurs de la déconnexion
+                        self.broadcast_to_room(room_id, {
+                            'type': 'player_left',
+                            'username': username,
+                            'players_info': room.get_players_info()
+                        })
+                    except Exception as e:
+                        print(f"Erreur lors du traitement de la déconnexion: {e}")
+                        
                     # Supprime la room si elle est vide
                     if not room.players:
+                        if room.phase_timer:
+                            room.phase_timer.cancel()
                         del self.rooms[room_id]
             
             if client_socket in self.clients:
                 del self.clients[client_socket]
+                
         except Exception as e:
             print(f"Erreur lors de la déconnexion: {e}")
         finally:
