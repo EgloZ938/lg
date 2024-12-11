@@ -340,18 +340,27 @@ class LoupGarouServer:
     
     def broadcast_to_room(self, room_id: str, message: dict, exclude_socket=None):
         """Envoie un message à tous les joueurs d'une room"""
-        if room_id in self.rooms:
-            try:
-                encoded_message = json.dumps(message).encode('utf-8')
-                for client_socket in list(self.rooms[room_id].players.keys()):  # Conversion en liste pour éviter les modifications pendant l'itération
+        if room_id not in self.rooms:
+            return
+        
+        dead_sockets = []
+        try:
+            encoded_message = json.dumps(message).encode('utf-8')
+            with threading.Lock():  # Protection contre les modifications concurrentes
+                for client_socket in list(self.rooms[room_id].players.keys()):
                     if client_socket != exclude_socket:
                         try:
                             client_socket.send(encoded_message)
                         except Exception as e:
-                            print(f"Erreur lors du broadcast: {e}")
-                            self.handle_disconnection(client_socket)
-            except Exception as e:
-                print(f"Erreur générale lors du broadcast: {e}")
+                            print(f"Erreur broadcast vers {client_socket}: {e}")
+                            dead_sockets.append(client_socket)
+            
+            # Nettoyage des sockets morts
+            for dead_socket in dead_sockets:
+                self.handle_disconnection(dead_socket)
+                
+        except Exception as e:
+            print(f"Erreur générale lors du broadcast: {e}")
     
     def create_room(self) -> str:
         room_id = str(random.randint(1000, 9999))
@@ -473,8 +482,11 @@ class LoupGarouServer:
                 })
         
         elif msg_type == 'night_action':
-            room_id = self.clients.get(client_socket)
-            if room_id and room_id in self.rooms:
+            try:
+                room_id = self.clients.get(client_socket)
+                if not room_id or room_id not in self.rooms:
+                    return
+                    
                 room = self.rooms[room_id]
                 action = message.get('action')
                 target = message.get('target')
@@ -482,39 +494,56 @@ class LoupGarouServer:
                 # Convert target username to socket if needed
                 target_socket = None
                 if target:
-                    target_socket = next((socket for socket, player in room.players.items() 
-                                        if player.username == target), None)
+                    with threading.Lock():  # Protection lors de la recherche
+                        for socket, player in room.players.items():
+                            if player.username == target:
+                                target_socket = socket
+                                break
                 
-                if room.process_night_action(client_socket, {
+                success = room.process_night_action(client_socket, {
                     'action': action,
                     'target': target_socket,
                     'targets': message.get('targets')  # For Cupidon's action
-                }):
-                    # Send success response
-                    response = {
-                        'type': 'action_result',
-                        'success': True
-                    }
-                    client_socket.send(json.dumps(response).encode('utf-8'))
-                    
-                    # Special handling for Voyante
-                    if action == 'see' and target_socket:
+                })
+                
+                if success:
+                    try:
+                        # Send success response
                         response = {
-                            'type': 'seer_result',
-                            'target': room.players[target_socket].username,
-                            'role': room.players[target_socket].role.value
+                            'type': 'action_result',
+                            'success': True
                         }
                         client_socket.send(json.dumps(response).encode('utf-8'))
-                    
-                    # Check if all night actions are completed
-                    self.check_phase_completion(room)
+                        
+                        # Special handling for Voyante
+                        if action == 'see' and target_socket:
+                            response = {
+                                'type': 'seer_result',
+                                'target': room.players[target_socket].username,
+                                'role': room.players[target_socket].role.value
+                            }
+                            client_socket.send(json.dumps(response).encode('utf-8'))
+                        
+                        # Check if all night actions are completed
+                        self.check_phase_completion(room)
+                    except Exception as e:
+                        print(f"Erreur lors de l'envoi de la réponse: {e}")
+                        self.handle_disconnection(client_socket)
                 else:
-                    response = {
-                        'type': 'action_result',
-                        'success': False,
-                        'message': "Action impossible"
-                    }
-                    client_socket.send(json.dumps(response).encode('utf-8'))
+                    try:
+                        response = {
+                            'type': 'action_result',
+                            'success': False,
+                            'message': "Action impossible"
+                        }
+                        client_socket.send(json.dumps(response).encode('utf-8'))
+                    except Exception as e:
+                        print(f"Erreur lors de l'envoi de l'échec: {e}")
+                        self.handle_disconnection(client_socket)
+                        
+            except Exception as e:
+                print(f"Erreur dans le traitement de l'action nocturne: {e}")
+                self.handle_disconnection(client_socket)
 
         elif msg_type == 'vote':
             room_id = self.clients.get(client_socket)
@@ -695,6 +724,17 @@ class LoupGarouServer:
         room.votes.clear()
         for player in room.players.values():
             player.has_voted = False
+
+    def safe_send(self, client_socket: socket.socket, message: dict) -> bool:
+        """Envoie sécurisé d'un message à un client"""
+        try:
+            encoded_message = json.dumps(message).encode('utf-8')
+            client_socket.send(encoded_message)
+            return True
+        except Exception as e:
+            print(f"Erreur lors de l'envoi: {e}")
+            self.handle_disconnection(client_socket)
+            return False
 
     def kill_player(self, room: GameRoom, player_socket: socket.socket):
         """Gère la mort d'un joueur"""

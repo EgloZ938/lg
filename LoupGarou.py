@@ -303,12 +303,12 @@ class LoupGarouClient:
             self.start_button.config(state='disabled')
     
     def handle_player_selection(self, player_list, callback, selection_window):
-        """Gère la sélection d'un joueur dans une li"""
+        """Gère la sélection d'un joueur"""
         selections = player_list.curselection()
         if selections:
             selected_player = player_list.get(selections[0])
-            callback(selected_player)
-            selection_window.destroy()
+            if callback(selected_player):  # Vérifie si l'envoi a réussi
+                selection_window.destroy()
         else:
             messagebox.showerror("Erreur", "Veuillez sélectionner un joueur")
 
@@ -366,13 +366,20 @@ class LoupGarouClient:
         while self.connected:
             try:
                 message = self.client_socket.recv(1024).decode('utf-8')
-                if message:
-                    self.root.after(0, self.handle_message, json.loads(message))
-            except:
+                if not message:
+                    raise ConnectionError("Connection lost")
+                self.root.after(0, self.handle_message, json.loads(message))
+            except json.JSONDecodeError:
+                print("Erreur décodage JSON")
+                continue
+            except ConnectionError:
                 self.connected = False
                 self.root.after(0, messagebox.showerror, "Erreur", 
-                              "Connexion au serveur perdue")
+                            "Connexion au serveur perdue")
                 break
+            except Exception as e:
+                print(f"Erreur réception: {e}")
+                continue
 
     def send_message(self):
         """Envoie un message au serveur"""
@@ -396,6 +403,22 @@ class LoupGarouClient:
             self.connected = False
             messagebox.showerror("Erreur", "Connexion au serveur perdue")
             self.show_frame(self.main_menu)
+
+    def safe_send(self, message: dict) -> bool:
+        """Envoie un message de manière sécurisée au serveur"""
+        if not self.connected:
+            messagebox.showerror("Erreur", "Non connecté au serveur")
+            return False
+            
+        try:
+            self.client_socket.send(json.dumps(message).encode('utf-8'))
+            return True
+        except Exception as e:
+            print(f"Erreur lors de l'envoi: {e}")
+            self.connected = False
+            messagebox.showerror("Erreur", "Connexion au serveur perdue")
+            self.show_frame(self.main_menu)
+            return False
 
     def start_game(self):
         """Démarre la partie"""
@@ -546,21 +569,19 @@ class LoupGarouClient:
 
     def send_wolf_action(self, target):
         """Envoie l'action du loup-garou"""
-        message = {
+        return self.safe_send({
             'type': 'night_action',
             'action': 'kill',
             'target': target
-        }
-        self.client_socket.send(json.dumps(message).encode('utf-8'))
+        })
 
     def send_seer_action(self, target):
         """Envoie l'action de la voyante"""
-        message = {
+        return self.safe_send({
             'type': 'night_action',
             'action': 'see',
             'target': target
-        }
-        self.client_socket.send(json.dumps(message).encode('utf-8'))
+        })
 
     def send_witch_action(self, action_type, target=None):
         """Envoie l'action de la sorcière"""
@@ -570,7 +591,7 @@ class LoupGarouClient:
         }
         if target:
             message['target'] = target
-        self.client_socket.send(json.dumps(message).encode('utf-8'))
+        return self.safe_send(message)
 
     def send_witch_kill(self, target):
         """Envoie l'action de meurtre de la sorcière"""
@@ -578,20 +599,18 @@ class LoupGarouClient:
 
     def send_cupid_action(self, lovers):
         """Envoie l'action de Cupidon"""
-        message = {
+        return self.safe_send({
             'type': 'night_action',
             'action': 'link',
             'targets': lovers
-        }
-        self.client_socket.send(json.dumps(message).encode('utf-8'))
+        })
 
     def send_vote(self, target):
         """Envoie un vote"""
-        message = {
+        return self.safe_send({
             'type': 'vote',
             'target': target
-        }
-        self.client_socket.send(json.dumps(message).encode('utf-8'))
+        })
 
     def disable_all_actions(self):
         """Désactive toutes les actions possibles"""
